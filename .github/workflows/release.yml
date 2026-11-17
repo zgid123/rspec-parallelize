@@ -1,0 +1,117 @@
+name: Release
+
+on:
+  push:
+    paths:
+      - '.changeset/*.md'
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish again (vX.Y.Z)
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release:
+    name: Release Changes
+
+    runs-on: ubuntu-latest
+
+    outputs:
+      tag: ${{ steps.tags.outputs.tag || steps.again.outputs.tag }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Prepare Node.JS and pnpm
+        if: github.event_name == 'push'
+        uses: ./.github/actions/prepare-nodejs-pnpm
+
+      - name: Install dependencies
+        if: github.event_name == 'push'
+        run: pnpm install
+
+      - name: Install Ruby
+        if: github.event_name == 'push'
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '4.0'
+
+      - name: Disable GPG
+        if: github.event_name == 'push'
+        run: git config --global commit.gpgsign false
+
+      - name: Create Release PR or Publish
+        id: changesets
+        if: github.event_name == 'push'
+        uses: changesets/action@v2
+        with:
+          version-script: pnpm version-packages
+          publish-script: pnpm release
+          create-github-releases: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Released tag
+        id: tags
+        if: steps.changesets.outputs.published == 'true'
+        env:
+          PACKAGES: ${{ steps.changesets.outputs.published-packages }}
+        run: |
+          version=$(jq -r '.[] | select(.name == "rspec-parallelize") | .version' <<< "$PACKAGES")
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      - name: Tag to publish again
+        id: again
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          if ! git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+            echo "::error::There is no tag $TAG."
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  rubygems:
+    name: Publish to RubyGems
+    needs: release
+    if: ${{ !cancelled() && needs.release.outputs.tag != '' }}
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+
+      - name: Install Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '4.0'
+
+      - name: Configure RubyGems credentials
+        uses: rubygems/configure-rubygems-credentials@dc5a8d8553e6ee01fc26761a49e99e733d17954a
+
+      - name: Build gem
+        run: gem build rspec-parallelize.gemspec
+
+      - name: Push gem
+        run: gem push rspec-parallelize-*.gem
+
+      - name: Attach gem to GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: gh release upload "$TAG" rspec-parallelize-*.gem --clobber

@@ -1,0 +1,24 @@
+{
+  "name": "rspec-parallelize",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Release tooling for the rspec-parallelize gem. The version here is the source of truth; scripts/sync_version.rb copies it into the gem.",
+  "license": "MIT",
+  "scripts": {
+    "preinstall": "npx only-allow pnpm",
+    "set-release": "changeset",
+    "version-packages": "changeset version && ruby scripts/sync_version.rb",
+    "release": "changeset git-tag"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.14.0",
+      "onFail": "download"
+    }
+  },
+  "devDependencies": {
+    "@changesets/changelog-github": "1.0.1",
+    "@changesets/cli": "3.0.3"
+  }
+}
